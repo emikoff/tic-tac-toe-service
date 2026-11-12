@@ -1,4 +1,4 @@
-from datasource.model.board import Board as DatasourceBoard
+from datasource.model.board import DatasourceBoard as DatasourceBoard
 from domain.model.board import DomainBoard as DomainBoard
 
 

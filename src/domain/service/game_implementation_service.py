@@ -2,8 +2,21 @@ from copy import deepcopy
 from uuid import UUID, uuid4
 
 from domain.service.game_interface_service import GameService
+from domain.exception.game_exception import (
+    CannotJoinOwnGameError,
+    GameAlreadyFinishedError,
+    GameNotAvailableError,
+    GameNotFoundError,
+    GameNotStartedError,
+    InvalidGameMoveError,
+    NotGameParticipantError,
+    NotPlayerTurnError,
+)
 from domain.model.board import DomainBoard
 from domain.model.game import DomainGame
+from domain.model.game_mark import GameMark
+from domain.model.game_state import GameState
+from domain.model.opponent_type import OpponentType
 from datasource.repository.game_repository import GameRepository
 from domain.model.game_status import GameStatus
 
@@ -201,86 +214,76 @@ class GameServiceImpl(GameService):
             return max(var_move)
         return min(var_move)
 
-    def _move_comp(self, game_uuid: UUID) -> DomainGame | None:
-        game = self.game_repository.get(game_uuid)
+    def _update_finished_state(self, game: DomainGame) -> GameStatus | None:
+        is_finished, winner = self.check_end_game_and_winner(game.board.matrix)
+        if not is_finished:
+            return None
 
-        if game is not None:
-            old_board = game.board
+        game.current_player_uuid = None
+        if winner == 0:
+            game.state = GameState.DRAW
+            game.winner_uuid = None
+            return GameStatus.DRAW
 
-            its_end, _ = self.check_end_game_and_winner(old_board.matrix)
-            if its_end:
-                return None
+        game.state = GameState.VICTORY
+        if winner == self.x:
+            game.winner_uuid = game.first_player_uuid
+            return GameStatus.USER_WON
 
-            if self.whose_move(old_board.matrix) != self.comp_mark:
-                return None
-
-            next_board = deepcopy(old_board)
-            new_board = self.next_move(
-                next_board,
-                self.comp_mark,
-            )
-
-            if self.board_validate(old_board, new_board):
-                game.board = new_board
-                self.game_repository.save(game)
-                return game
-
-        return None
+        game.winner_uuid = game.second_player_uuid
+        if game.opponent_type == OpponentType.COMPUTER:
+            return GameStatus.COMPUTER_WON
+        return GameStatus.USER_WON
 
     def move_player(
         self,
         game_uuid: UUID,
+        user_uuid: UUID,
         new_board: DomainBoard,
-    ) -> tuple[DomainGame | None, GameStatus]:
-
-        def winner_to_game_status(index: int) -> GameStatus:
-            if index == self.user_mark:
-                return GameStatus.USER_WON
-            elif index == self.comp_mark:
-                return GameStatus.COMPUTER_WON
-            elif index == 0:
-                return GameStatus.DRAW
-            return GameStatus.INVALID_WINNER
-
+    ) -> tuple[DomainGame, GameStatus]:
         game = self.game_repository.get(game_uuid)
-
         if game is None:
-            return None, GameStatus.GAME_NOT_FOUND
+            raise GameNotFoundError
 
-        its_end, winner = self.check_end_game_and_winner(game.board.matrix)
-
-        if its_end:
-            if game.board != new_board:
-                return None, GameStatus.INVALID_MOVE
-            return game, winner_to_game_status(winner)
-
-        if not self.board_validate(
-            game.board,
-            new_board,
-        ):
-            return None, GameStatus.INVALID_MOVE
+        participants = {game.first_player_uuid, game.second_player_uuid}
+        if user_uuid not in participants:
+            raise NotGameParticipantError
+        if game.state == GameState.WAITING_FOR_PLAYERS:
+            raise GameNotStartedError
+        if game.state in (GameState.DRAW, GameState.VICTORY):
+            raise GameAlreadyFinishedError
+        if game.current_player_uuid != user_uuid:
+            raise NotPlayerTurnError
+        if not self.board_validate(game.board, new_board):
+            raise InvalidGameMoveError
 
         game.board = new_board
+        game_status = self._update_finished_state(game)
+        if game_status is not None:
+            self.game_repository.save(game)
+            return game, game_status
+
+        if game.opponent_type == OpponentType.USER:
+            if user_uuid == game.first_player_uuid:
+                game.current_player_uuid = game.second_player_uuid
+            else:
+                game.current_player_uuid = game.first_player_uuid
+        else:
+            game.board = self.next_move(deepcopy(game.board), self.comp_mark)
+            game_status = self._update_finished_state(game)
+            if game_status is not None:
+                self.game_repository.save(game)
+                return game, game_status
+            game.current_player_uuid = game.first_player_uuid
+
         self.game_repository.save(game)
-
-        its_end, winner = self.check_end_game_and_winner(game.board.matrix)
-
-        if its_end:
-            return game, winner_to_game_status(winner)
-
-        game = self._move_comp(game_uuid)
-
-        if game is None:
-            return None, GameStatus.INTERNAL_ERROR
-
-        its_end, winner = self.check_end_game_and_winner(game.board.matrix)
-
-        if its_end:
-            return game, winner_to_game_status(winner)
-
         return game, GameStatus.GAME_CONTINUES
 
-    def new_game(self) -> DomainGame:
+    def new_game(
+        self,
+        first_player_uuid: UUID | None = None,
+        opponent_type: OpponentType = OpponentType.COMPUTER,
+    ) -> DomainGame:
         game_uuid = uuid4()
 
         matrix = [
@@ -289,12 +292,55 @@ class GameServiceImpl(GameService):
             [0, 0, 0],
         ]
 
+        if opponent_type == OpponentType.USER:
+            state = GameState.WAITING_FOR_PLAYERS
+            current_player_uuid = None
+        else:
+            state = GameState.PLAYER_TURN
+            current_player_uuid = first_player_uuid
+
         domain_board = DomainBoard(matrix)
         domain_game = DomainGame(
-            game_uuid,
-            domain_board,
+            uuid=game_uuid,
+            board=domain_board,
+            opponent_type=opponent_type,
+            state=state,
+            first_player_uuid=first_player_uuid,
+            second_player_uuid=None,
+            current_player_uuid=current_player_uuid,
+            winner_uuid=None,
+            first_player_mark=GameMark.X,
+            second_player_mark=GameMark.O,
         )
 
         self.game_repository.save(domain_game)
 
         return domain_game
+
+    def get_available_games(self) -> list[DomainGame]:
+        return self.game_repository.get_available()
+
+    def get_game(self, game_uuid: UUID) -> DomainGame:
+        game = self.game_repository.get(game_uuid)
+        if game is None:
+            raise GameNotFoundError
+        return game
+
+    def join_game(self, game_uuid: UUID, user_uuid: UUID) -> DomainGame:
+        game = self.game_repository.get(game_uuid)
+        if game is None:
+            raise GameNotFoundError
+        if game.first_player_uuid == user_uuid:
+            raise CannotJoinOwnGameError
+        if (
+            game.opponent_type != OpponentType.USER
+            or game.state != GameState.WAITING_FOR_PLAYERS
+            or game.second_player_uuid is not None
+        ):
+            raise GameNotAvailableError
+
+        game.second_player_uuid = user_uuid
+        game.state = GameState.PLAYER_TURN
+        game.current_player_uuid = game.first_player_uuid
+        self.game_repository.save(game)
+        return game

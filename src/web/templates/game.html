@@ -7,44 +7,162 @@
     <link rel="stylesheet" href="{{ url_for('ui.static', filename='style.css') }}">
 </head>
 <body>
-    <main class="game" aria-labelledby="game-title">
-        <h1 id="game-title">Крестики-нолики</h1>
+    <main class="app-shell" aria-labelledby="app-title">
+        <header class="app-header">
+            <div>
+                <p class="eyebrow">Tic-Tac-Toe · Backend 04</p>
+                <h1 id="app-title">Крестики-нолики</h1>
+            </div>
+            <div id="user-menu" class="user-menu is-hidden">
+                <span id="current-login" class="user-chip">—</span>
+                <button id="logout" class="button button-ghost button-small" type="button">
+                    Выйти
+                </button>
+            </div>
+        </header>
 
-        <div class="players" aria-label="Обозначения игроков">
-            <span>Вы — <strong class="mark mark-x">X</strong></span>
-            <span>Компьютер — <strong class="mark mark-o">O</strong></span>
-        </div>
+        <section id="auth-view" class="auth-card panel" aria-labelledby="auth-title">
+            <div class="auth-intro">
+                <span class="intro-mark mark-x">X</span>
+                <span class="intro-mark mark-o">O</span>
+                <h2>Игра начинается со входа</h2>
+                <p>
+                    Авторизуйтесь, чтобы играть с компьютером или пригласить второго игрока.
+                </p>
+            </div>
 
-        <div
-            id="board"
-            class="board is-disabled"
-            role="grid"
-            aria-label="Игровое поле"
-            aria-busy="true"
-        >
-            {% for index in range(9) %}
-                <button
-                    class="cell"
-                    type="button"
-                    role="gridcell"
-                    data-index="{{ index }}"
-                    aria-label="Пустая клетка {{ index + 1 }}"
-                    disabled
-                ></button>
-            {% endfor %}
-        </div>
+            <form id="auth-form" class="auth-form">
+                <div class="mode-switch" aria-label="Режим авторизации">
+                    <button class="mode-button is-active" type="button" data-auth-mode="login">
+                        Вход
+                    </button>
+                    <button class="mode-button" type="button" data-auth-mode="signup">
+                        Регистрация
+                    </button>
+                </div>
 
-        <p id="status" class="status" role="status" aria-live="polite">
-            Создаём новую игру…
-        </p>
+                <h2 id="auth-title">Вход в игру</h2>
 
-        <button id="new-game" class="new-game" type="button">
-            Новая игра
-        </button>
+                <label class="field">
+                    <span>Логин</span>
+                    <input
+                        id="login"
+                        name="login"
+                        type="text"
+                        minlength="3"
+                        autocomplete="username"
+                        placeholder="Например, alice"
+                        required
+                    >
+                </label>
 
-        <p class="uuid">
-            UUID: <span id="game-uuid">—</span>
-        </p>
+                <label class="field">
+                    <span>Пароль</span>
+                    <input
+                        id="password"
+                        name="password"
+                        type="password"
+                        minlength="8"
+                        autocomplete="current-password"
+                        placeholder="Минимум 8 символов"
+                        required
+                    >
+                </label>
+
+                <button id="auth-submit" class="button button-primary" type="submit">
+                    Войти
+                </button>
+                <p id="auth-status" class="form-status" role="status" aria-live="polite"></p>
+            </form>
+        </section>
+
+        <section id="game-view" class="workspace is-hidden">
+            <aside class="sidebar panel" aria-label="Управление играми">
+                <section class="sidebar-section">
+                    <p class="section-label">Новая партия</p>
+                    <h2>Выберите соперника</h2>
+
+                    <div class="opponent-picker" role="radiogroup" aria-label="Тип соперника">
+                        <label class="opponent-option">
+                            <input type="radio" name="opponent" value="COMPUTER" checked>
+                            <span>
+                                <strong>Компьютер</strong>
+                                <small>Начать сразу</small>
+                            </span>
+                        </label>
+                        <label class="opponent-option">
+                            <input type="radio" name="opponent" value="USER">
+                            <span>
+                                <strong>Игрок</strong>
+                                <small>Ждать подключения</small>
+                            </span>
+                        </label>
+                    </div>
+
+                    <button id="new-game" class="button button-primary" type="button">
+                        Создать игру
+                    </button>
+                </section>
+
+                <section class="sidebar-section available-section">
+                    <div class="section-heading">
+                        <div>
+                            <p class="section-label">Онлайн</p>
+                            <h2>Доступные игры</h2>
+                        </div>
+                        <button id="refresh-games" class="icon-button" type="button" aria-label="Обновить список">
+                            ↻
+                        </button>
+                    </div>
+                    <div id="available-games" class="game-list">
+                        <p class="empty-list">Войдите, чтобы увидеть игры.</p>
+                    </div>
+                </section>
+            </aside>
+
+            <section class="game panel" aria-labelledby="game-title">
+                <div class="game-heading">
+                    <div>
+                        <p class="section-label">Текущая партия</p>
+                        <h2 id="game-title">Игровое поле</h2>
+                    </div>
+                    <span id="game-type" class="game-badge">Нет игры</span>
+                </div>
+
+                <div class="players" aria-label="Обозначения игроков">
+                    <span id="first-player">Вы — <strong class="mark mark-x">X</strong></span>
+                    <span id="second-player">Компьютер — <strong class="mark mark-o">O</strong></span>
+                </div>
+
+                <div
+                    id="board"
+                    class="board is-disabled"
+                    role="grid"
+                    aria-label="Игровое поле"
+                    aria-busy="false"
+                >
+                    {% for index in range(9) %}
+                        <button
+                            class="cell"
+                            type="button"
+                            role="gridcell"
+                            data-index="{{ index }}"
+                            aria-label="Пустая клетка {{ index + 1 }}"
+                            disabled
+                        ></button>
+                    {% endfor %}
+                </div>
+
+                <p id="status" class="status" role="status" aria-live="polite">
+                    Создайте игру или присоединитесь к доступной партии.
+                </p>
+
+                <div class="game-meta">
+                    <span>UUID игры</span>
+                    <code id="game-uuid">—</code>
+                </div>
+            </section>
+        </section>
     </main>
 
     <script src="{{ url_for('ui.static', filename='game.js') }}" defer></script>

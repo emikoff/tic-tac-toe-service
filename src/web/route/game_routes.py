@@ -1,46 +1,117 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify, request
 
+from domain.exception.game_exception import (
+    CannotJoinOwnGameError,
+    GameAlreadyFinishedError,
+    GameNotAvailableError,
+    GameNotFoundError,
+    GameNotStartedError,
+    InvalidGameMoveError,
+    NotGameParticipantError,
+    NotPlayerTurnError,
+)
+from domain.model.opponent_type import OpponentType
 from web.mapper.board_mapper import WebBoardMapper
 from web.model.board import WebBoard
 from web.mapper.game_mapper import WebGameMapper
 from web.module.game_module import GameModule
 
-HTTP_STATUS_200 = {
-    "DRAW": "Игра закончилась: Нечья",
-    "USER_WON": "Игра закончилась: Победил игрок",
-    "COMPUTER_WON": "Игра закончилась: Победил компьютер",
-    "GAME_CONTINUES": "Игра продолжается",
-}
 HTTP_STATUS_400 = {
-    "GAME_NOT_FOUND": "ERROR: GAME NOT FOUND",
     "INVALID_MOVE": "ERROR: INVALID MOVE",
 }
-HTTP_STATUS_500 = {
-    "INTERNAL_ERROR": "INTERNAL ERROR",
-    "INVALID_WINNER": "INVALID WINNER",
-}
+
+
+def web_game_to_dict(web_game):
+    def uuid_or_none(value):
+        return str(value) if value is not None else None
+
+    return {
+        "uuid": str(web_game.uuid),
+        "board": {"matrix": web_game.board.matrix},
+        "opponent_type": web_game.opponent_type.value,
+        "state": web_game.state.value,
+        "first_player_uuid": uuid_or_none(web_game.first_player_uuid),
+        "second_player_uuid": uuid_or_none(web_game.second_player_uuid),
+        "current_player_uuid": uuid_or_none(web_game.current_player_uuid),
+        "winner_uuid": uuid_or_none(web_game.winner_uuid),
+        "first_player_mark": web_game.first_player_mark.value,
+        "second_player_mark": web_game.second_player_mark.value,
+    }
 
 
 def create_game_bp(game_module: GameModule) -> Blueprint:
     game_bp = Blueprint("game", __name__, url_prefix="/game")
 
     game_manager = game_module.game_manager
+    user_authenticator = game_module.user_authenticator
     web_game_mapper = WebGameMapper()
     web_board_mapper = WebBoardMapper()
 
     @game_bp.route("", methods=["POST"])
+    @user_authenticator.required
     def create_game():
-        get_web_game = web_game_mapper.to_web(game_manager.new_game())
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"error": "Body must be a JSON object"}), 400
+        if "opponent_type" not in data:
+            return jsonify(
+                {"error": "JSON object does not contain opponent_type"}
+            ), 400
 
-        result = {
-            "uuid": str(get_web_game.uuid),
-            "board": {"matrix": get_web_game.board.matrix},
-            "game_status": "CREATED_NEW_GAME",
-        }
+        try:
+            opponent_type = OpponentType(data["opponent_type"])
+        except (TypeError, ValueError):
+            return jsonify({"error": "Invalid opponent_type"}), 400
+
+        domain_game = game_manager.new_game(
+            g.current_user_uuid,
+            opponent_type,
+        )
+        get_web_game = web_game_mapper.domain_to_web(domain_game)
+
+        result = web_game_to_dict(get_web_game)
+        result["game_status"] = "CREATED_NEW_GAME"
 
         return jsonify(result), 200
 
+    @game_bp.get("")
+    @user_authenticator.required
+    def get_available_games():
+        games = game_manager.get_available_games()
+        result = [
+            web_game_to_dict(web_game_mapper.domain_to_web(game))
+            for game in games
+        ]
+        return jsonify({"games": result}), 200
+
+    @game_bp.get("/<uuid:game_uuid>")
+    @user_authenticator.required
+    def get_game(game_uuid):
+        try:
+            game = game_manager.get_game(game_uuid)
+        except GameNotFoundError:
+            return jsonify({"error": "Game not found"}), 404
+
+        web_game = web_game_mapper.domain_to_web(game)
+        return jsonify(web_game_to_dict(web_game)), 200
+
+    @game_bp.post("/<uuid:game_uuid>/join")
+    @user_authenticator.required
+    def join_game(game_uuid):
+        try:
+            game = game_manager.join_game(game_uuid, g.current_user_uuid)
+        except GameNotFoundError:
+            return jsonify({"error": "Game not found"}), 404
+        except CannotJoinOwnGameError:
+            return jsonify({"error": "Cannot join your own game"}), 409
+        except GameNotAvailableError:
+            return jsonify({"error": "Game is not available"}), 409
+
+        web_game = web_game_mapper.domain_to_web(game)
+        return jsonify(web_game_to_dict(web_game)), 200
+
     @game_bp.route("/<uuid:game_uuid>", methods=["POST"])
+    @user_authenticator.required
     def move_user(game_uuid):
         data = request.get_json(silent=True)
 
@@ -66,35 +137,33 @@ def create_game_bp(game_module: GameModule) -> Blueprint:
 
         new_board = web_board_mapper.to_domain(WebBoard(data["matrix"]))
 
-        domain_game, game_status = game_manager.move_player(game_uuid, new_board)
+        try:
+            domain_game, game_status = game_manager.move_player(
+                game_uuid,
+                g.current_user_uuid,
+                new_board,
+            )
+        except GameNotFoundError:
+            return jsonify({"error": "Game not found"}), 404
+        except NotGameParticipantError:
+            return jsonify({"error": "User is not a game participant"}), 403
+        except GameNotStartedError:
+            return jsonify({"error": "Game has not started"}), 409
+        except GameAlreadyFinishedError:
+            return jsonify({"error": "Game is already finished"}), 409
+        except NotPlayerTurnError:
+            return jsonify({"error": "It is not your turn"}), 409
+        except InvalidGameMoveError:
+            return jsonify(
+                {
+                    "game_status": "INVALID_MOVE",
+                    "error": HTTP_STATUS_400["INVALID_MOVE"],
+                }
+            ), 400
 
-        if domain_game is not None and game_status.name in HTTP_STATUS_200:
-            http_status = 200
-            web_game = web_game_mapper.to_web(domain_game)
-            result = {
-                "uuid": str(web_game.uuid),
-                "board": {"matrix": web_game.board.matrix},
-                "game_status": str(game_status.name),
-            }
-        elif game_status.name in HTTP_STATUS_400:
-            http_status = 400
-            result = {
-                "game_status": str(game_status.name),
-                "error": HTTP_STATUS_400[game_status.name],
-            }
-        elif game_status.name in HTTP_STATUS_500:
-            http_status = 500
-            result = {
-                "game_status": str(game_status.name),
-                "error": HTTP_STATUS_500[game_status.name],
-            }
-        else:
-            http_status = 500
-            result = {
-                "game_status": "Unknown game status",
-                "error": "Unknown ERROR",
-            }
-
-        return jsonify(result), http_status
+        web_game = web_game_mapper.domain_to_web(domain_game)
+        result = web_game_to_dict(web_game)
+        result["game_status"] = game_status.name
+        return jsonify(result), 200
 
     return game_bp
