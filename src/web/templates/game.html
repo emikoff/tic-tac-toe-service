@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Крестики-нолики</title>
+    <link rel="stylesheet" href="{{ url_for('ui.static', filename='style.css') }}">
+</head>
+<body>
+    <main class="game" aria-labelledby="game-title">
+        <h1 id="game-title">Крестики-нолики</h1>
+
+        <div class="players" aria-label="Обозначения игроков">
+            <span>Вы — <strong class="mark mark-x">X</strong></span>
+            <span>Компьютер — <strong class="mark mark-o">O</strong></span>
+        </div>
+
+        <div
+            id="board"
+            class="board is-disabled"
+            role="grid"
+            aria-label="Игровое поле"
+            aria-busy="true"
+        >
+            {% for index in range(9) %}
+                <button
+                    class="cell"
+                    type="button"
+                    role="gridcell"
+                    data-index="{{ index }}"
+                    aria-label="Пустая клетка {{ index + 1 }}"
+                    disabled
+                ></button>
+            {% endfor %}
+        </div>
+
+        <p id="status" class="status" role="status" aria-live="polite">
+            Создаём новую игру…
+        </p>
+
+        <button id="new-game" class="new-game" type="button">
+            Новая игра
+        </button>
+
+        <p class="uuid">
+            UUID: <span id="game-uuid">—</span>
+        </p>
+    </main>
+
+    <script src="{{ url_for('ui.static', filename='game.js') }}" defer></script>
+</body>
+</html>
