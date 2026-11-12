@@ -96,8 +96,8 @@ src/
 ├── web/         Flask API, авторизация и браузерный интерфейс
 └── tests/       тесты слоёв и HTTP API
 docs/
-├── implementation-guide.md
-└── version-history.md
+├── implementation-guide.md  заметки по версии T03
+└── version-history.md       версии T03 и T04B
 ```
 
-Подготовка и история релизов описаны в [плане T04B](docs/version-history.md).
+Состав версии T04B и история изменений описаны в [заметках к версиям](docs/version-history.md).
